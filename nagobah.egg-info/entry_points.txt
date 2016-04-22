@@ -1,0 +1,3 @@
+[console_scripts]
+nagobah = nagobah.nagobah:main
+

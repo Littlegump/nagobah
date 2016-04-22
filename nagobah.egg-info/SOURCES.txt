@@ -1,0 +1,11 @@
+MANIFEST.in
+README.txt
+nagobah.py
+setup.py
+nagobah/__init__.py
+nagobah/nagobah.py
+nagobah.egg-info/PKG-INFO
+nagobah.egg-info/SOURCES.txt
+nagobah.egg-info/dependency_links.txt
+nagobah.egg-info/entry_points.txt
+nagobah.egg-info/top_level.txt
