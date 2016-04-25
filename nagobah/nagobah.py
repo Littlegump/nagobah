@@ -6,6 +6,7 @@ u"""this script is used to create distribute tasks on remote host"""
 import sys
 import requests
 import os
+import re
 from json import dump, load, loads
 from getopt import getopt, GetoptError
 
@@ -27,7 +28,7 @@ def trans_file_to_list(filename):
 def check_validation(
         data_module, task_string, distri_file,
         host_list, input_file, module_tasks_iter,
-        module_task_list,task_list):
+        task_list,flag_dep):
     """
     首先有了inputfile
     1、-t指定的要分布的task必须是inputfile中已经有了的taskname
@@ -38,85 +39,124 @@ def check_validation(
     6、判断有没有name, command, hostname, 使用dict.has_key()来判断
     """
 
-    # 检查inputfile和-t指定的task有没有重复值
-    check_repeat(task_string, task_list)
-    # 将要修改的task和模板中的task_name做比较，如果要修改的task不是模板中的子集就报错
-    if not check_issub(task_list, module_task_list):
-        print "tasks_name列表：" + str(module_task_list)
-        print "-t指定的task列表" + str(task_list)
-        print "-t指定的任务列表有问题，有些task不在taskname中，请重新指定-t"
-        sys.exit(1)
-
+    # -t和hostlist的重复性测试
+    check_repeat(u"-t 指定的值： " + task_string, task_list)
     check_repeat(distri_file, host_list)
 
-
-
-
-
-
-
-    #---------检查必备键-----------------
+    #---------检查job必备键,及其job键列表的重复性-----------------
     module_key_list = data_module.keys()
-    # 检查模块键列表的重复性
-    check_repeat(str(module_key_list),module_key_list)
     list_ = [u"name",u"tasks",u"cron_schedule",u"dependencies",u"notes"]
 
-    list_2 = [u"name",u"tasks",u"cron_schedule",u"notes"]
-    # 检查模块中键的合法性：dependencies可选，其他的都要一样
-    check_issub(module_key_list,list_)
     if not check_issub(module_key_list,list_):
-        print "Error: 模块的'name','cron_schedule','notes','tasks'键必须有并且不能重复，'dependencies'可选"
-        sys.exit(1)
+        print "模板必备字段: ", list_, " ,其中'dependencies'字段可选"
+        if flag_dep == 0:
+            module_key_list.remove(u'dependencies')
+        print "你的字段列表： ", module_key_list
+        s1 = set(module_key_list).difference(set(list_))
+        print "Error: 未知字段： ",
+        for i in list(s1):
+            print i,
+        sys.exit()
+    elif len(module_key_list) < 5:
+        print "模板必备字段: ", list_, " ,其中'dependencies'字段可选"
+        if flag_dep == 0:
+            module_key_list.remove(u'dependencies')
+            list_.remove(u'dependencies')
+        print "你的字段列表: ", module_key_list
+        s1 = set(list_).difference(set(module_key_list))
+        print "Error: 缺少字段: ",
+        for i in list(s1):
+            print u"\""+i+u"\"  ",
+        sys.exit()
 
-    if len(module_key_list) != len(list_):
-        if set(module_key_list) != set(list_2):
-            print 5
-            print "Error: 模块的'name','cron_schedule','notes','tasks'键必须有并且不能重复，'dependencies'可选"
+
+
+
+
+    #四件不为空检查
+
+    check_if_null(data_module,'name')
+    check_if_null(data_module,'cron_schedule')
+    check_if_null(data_module,'notes')
+    check_if_null(data_module,'tasks')
+
+
+    # check cron_syntax
+    check_schedule_syntax(data_module)
+
+    for i in module_tasks_iter:
+        if 'name' not in data_module['tasks'][i].keys():
+            print data_module['tasks'][i]
+            print "Error: 该任务缺少name字段!"
             sys.exit(1)
-    # -------------------------------------
+        if 'command' not in data_module['tasks'][i].keys():
+            print data_module['tasks'][i]
+            print "Error: 该任务缺少command字段!"
+            sys.exit(1)
 
-    # -------------schdule,name,notes----------
-    list_schedule = data_module['cron_schedule'].split()
-    if not len(list_schedule) == 5:
-        print "Error: schedule的格式有误，至少有5个字段"
-        sys.exit(1)
 
-    if data_module['name'] == "" or data_module['name'] == None:
-        print "Error: name字段不能为空，不能为none"
-        sys.exit(1)
+    module_task_list = [data_module[u'tasks'][i][u'name'] for i in module_tasks_iter]
 
-    if data_module["notes"] == "" or data_module['notes'] == None:
-        print "Error: notes字段不能为空，不能为none"
-        sys.exit(1)
-        # choice = raw_input("notes is recommended not null, input Y to add now, N to exit: ")
-        # if choice == 'Y':
-        #    notes = raw_input("在这里输入notes内容：")
-    # ----------------------------------------
+
+
+
+
 
 
     # -------------检查tasks内部----------
-    check_repeat(input_file + '中tasks中的name', module_task_list)
+    #check_repeat(input_file + u'中tasks中的name', module_task_list)
+
+
+    for id_ in module_tasks_iter:
+        if 'name' not in data_module['tasks'][id_].keys():
+            print data_module['tasks'][id_]
+            print "Error: 这个任务中任务缺少name字段，请重新检查!"
+            sys.exit(1)
+        else:
+            name = data_module['tasks'][id_]['name']
+            if name == "" or name == None:
+                print data_module['tasks'][id_]
+                print "Error: 这个任务中的name值不能为空！"
+                sys.exit(1)
+
+        if 'command' not in data_module['tasks'][id_].keys():
+            print data_module['tasks'][id_]
+            print "Error: 这个任务缺少command字段，请重新检查!", input_file
+            sys.exit(1)
+        else:
+            command = data_module['tasks'][id_]['command']
+            if command == "" or command == None:
+                print data_module['tasks'][id_]
+                print "Error: 这个任务中的command值不能为空！"
+                sys.exit(1)
+
+
+    # 将要修改的task和模板中的task_name做比较，如果要修改的task不是模板中的子集就报错
+    if not check_issub(task_list, module_task_list):
+        print u"模板中task_name列表: " + str(module_task_list)
+        print u"-t指定的name列表: " + str(task_list)
+        s1 = set(task_list).difference(set(module_task_list))
+        print u"Error: 指定列表中有未知name: ",
+        for i in list(s1):
+            print "\""+i+"\".",
+        sys.exit(1)
+
+
     for id_ in module_tasks_iter:
         command = data_module['tasks'][id_]['command']
         name = data_module['tasks'][id_]['name']
-        if name == "" or name == None:
-            print "Error: tasks中的task的name值不能为空！"
-            sys.exit(1)
-
-        if command == "" or command == None:
-            print u"Error: task(" + name + u") 的command值不能为空"
-            sys.exit(1)
-
 
         if u"soft_timeout" in data_module['tasks'][id_].keys():
             soft_timeout = data_module['tasks'][id_]['soft_timeout']
 
             if soft_timeout == "" or soft_timeout == None:
-                print u"Error: task(" + name + u") 的soft_timeout不能为空"
+                print data_module['tasks'][i]
+                print u"Error: soft_timeout不能为空!"
                 sys.exit(1)
 
             if not str(soft_timeout).isdigit():
-                print u"Error: task(" + name + u") 的soft_timeout必须是整数"
+                print data_module['tasks'][i]
+                print u"Error: soft_timeout必须是整数!"
                 sys.exit(1)
 
 
@@ -124,49 +164,79 @@ def check_validation(
             hard_timeout = data_module['tasks'][id_]['hard_timeout']
 
             if hard_timeout == "" or hard_timeout == None:
-                print u"Error: task(" + name + u") 的hard_timeout不能为空"
+                print data_module['tasks'][i]
+                print u"Error: hard_timeout不能为空"
                 sys.exit(1)
 
             if not str(hard_timeout).isdigit():
-                print u"Error: task(" + name + u") 的hard_timeout必须是整数"
+                print u"Error: hard_timeout必须是整数!"
                 sys.exit(1)
 
         if name not in task_list:
             if u"hostname" not in data_module['tasks'][id_].keys():
-                print u"Error: " + u"未列入-t的task: (" + name  + u")必须要有hostname，请重新指定"
+                print data_module['tasks'][i]
+                print u"Error: 不做分布式的任务必须具备hostname字段，请重新编辑"
                 sys.exit(1)
             else:
                 hostname = data_module['tasks'][id_]['hostname']
                 if hostname == "" or hostname == None:
-                    print u"Error: task(" + name + u") 的hostname值不能为空"
-                    sys.exit(1)
-                elif hostname in host_list:
-                    print u"Error: 未列入-t的task: (" + name + u") 的hostname: (" + data_module['tasks'][id_]["hostname"] + u") 不能在" + distri_file + u"中"
+                    print data_module['tasks'][i]
+                    print u"Error: 不做分布式的任务hostname值不能为空"
                     sys.exit(1)
                 else:
+                    check_if_in_serv_host()
                     # 将来做服务器检查
                     pass
 
+
     if "dependencies" in module_key_list:
         module_depend_key_list = data_module[u'dependencies'].keys()
-        check_repeat(input_file + '中dependencies中的name', module_depend_key_list)
+
+        print module_depend_key_list
+        check_repeat(input_file + u'中dependencies中的name', module_depend_key_list)
 
         if not check_issub(module_depend_key_list, module_task_list):
-            print "tasks_name列表：" + str(module_task_list)
+            print "模板中task_name列表：" + str(module_task_list)
             print "依赖性键名列表：" + str(module_depend_key_list)
             print "依赖性键名列表中某个键不在已知的taskname列表中，请重新检查inputfile的depend字段"
             sys.exit(1)
 
         for i in module_depend_key_list:
+            check_repeat(u"dependencies字段有问题: \"" + i + u"\": " + str(data_module['dependencies'][i]), data_module['dependencies'][i])
             if not check_issub(data_module['dependencies'][i], module_task_list):
-                print "taskname列表：" + str(module_task_list)
+                print "模板中task_name列表：" + str(module_task_list)
                 print "问题点：" + str(data_module['dependencies'][i])
                 print "依赖性键的值列表中某个元素不在已知的taskname列表中，请重新检查inputfile的depend字段"
                 sys.exit(1)
 
-def check_if_null(arg):
-    if arg == "" or arg == None:
-        print arg + "的值不能为空"
+
+def check_if_in_serv_host():
+    '''检查不再分布式任务的hostname值是否在serverhost列表中'''
+
+    pass
+
+
+def check_if_null(data,arg):
+    if data[arg] == "" or data[arg] == None or data[arg] == []:
+        print "Error: ",arg, "字段值不能空"
+        sys.exit(1)
+
+
+def check_schedule_syntax(data_module):
+    """check if the item is matching cron syntax"""
+    string_ = data_module['cron_schedule']
+    list_each_char = ' '.join(string_).split()
+    list_schedule = data_module['cron_schedule'].split()
+
+    for i in list_each_char:
+        if i not in ['*',',','/','-','0','1','2','3','4','5','6','7','8','9']:
+            print "\"cron_schedule\": \"", string_, "\""
+            print "Error: cron_schedule非法字符：", i
+            sys.exit(1)
+
+    if not len(list_schedule) == 5:
+        print "\"cron_schedule\": \"", string_, "\""
+        print "Error: schedule的格式有误，至少有5个字段"
         sys.exit(1)
 
 
@@ -204,13 +274,39 @@ def check_input_file(data_module):
         module_depend_key_list
 
 
+def integration(module_tasks_iter,data_module):
+    """将tasks中task的id和其name对应的值整合成一个dict"""
+    dict_ = {}
+    for i in module_tasks_iter:
+        dict_[i] = data_module['tasks'][i]['name']
+
+    return dict_
+
+
 def check_repeat(describe, list_):
     """check if the list_ has repeated item"""
 
     if len(list_) != len(set(list_)):
-        print describe + u"有重复字段"
+        print u"Error: " + describe + u" 有重复字段"
         print str(list_)
         sys.exit(1)
+
+def check_tasks_name_repeat(data_module,module_tasks_iter):
+    dict_id_name = integration(module_tasks_iter,data_module)
+    values = dict_id_name.values()
+    for id_1 in dict_id_name:
+        yuanben = dict_id_name[id_1]
+        values.remove(yuanben)
+        if yuanben in values:
+            print data_module['tasks'][id_1]
+            del dict_id_name[id_1]
+            for id_2 in dict_id_name:
+                if dict_id_name[id_2] == yuanben:
+                    print data_module['tasks'][id_2]
+                    print "Error: 这两个任务的name重复，请更正!"
+                    sys.exit(1)
+        else:
+            pass
 
 
 def check_issub(list1, list2):
@@ -273,15 +369,22 @@ def decode_import_json(json_doc, transformers=None):
     return loads(json_doc, object_hook=custom_decoder)
 
 
-def check_module_task_dependencies(data_module, module_task_list):
+def check_list_be_same(list_1, list_2):
     """这个函数目前暂时作废"""
 
-    list_dep = data_module[u'dependencies'].keys()
-    list_dep.sort()
-    module_task_list.sort()
+    list_1.sort()
+    list_2.sort()
 
-    if list_dep != module_task_list:
-        print u"你的tasks中的name列表和dependencies中的name列表不匹配，请重新检查"
+    if list_1 != list_2:
+        list_1.remove(u'dependencies')
+        list_2.remove(u'dependencies')
+        print "Error: job必备字段： ",
+        print list_2,
+        print "'dependencies' 字段可选"
+        print "你的字段列表： ",
+        print list_1
+        #print u"你的字段列表：" + str(list_1.remove('dependencies'))
+        print u"请纠正相应字段."
         sys.exit(1)
 
 
@@ -543,22 +646,27 @@ def main():
     # 所有模板中的任务数
     module_tasks_iter = range(len(data_module[u'tasks']))
 
-    # 模板中tasks中的name列表
-    module_task_list = [data_module[u'tasks'][i][u'name'] for i in module_tasks_iter]
 
     # 用户的dep完全可以不写代表单个任务
+    flag_dep = 1
     if u'dependencies' not in data_module:
         data_module[u'dependencies'] = {}
-
-    for i in module_task_list:
-        if i not in data_module[u'dependencies'].keys():
-            data_module[u'dependencies'][i] = []
+        flag_dep = 0
 
     # check validation
     check_validation(
         data_module, task_string, distri_file,
         host_list, input_file, module_tasks_iter,
-        module_task_list,task_list)
+        task_list,flag_dep)
+
+    # 模板中tasks中的name列表
+    module_task_list = [data_module[u'tasks'][i][u'name'] for i in module_tasks_iter]
+
+
+    for i in module_task_list:
+        if i not in data_module[u'dependencies'].keys():
+            data_module[u'dependencies'][i] = []
+
 
     # unchanged_task_name = [l for l in module_task_list if l not in task_list]
 
